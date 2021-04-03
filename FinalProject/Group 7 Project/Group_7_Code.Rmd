@@ -1,0 +1,333 @@
+---
+title: "Group Project 7"
+author: "Prajwal C N"
+date: "05/05/2021"
+output:
+  html_document:
+    df_print: paged
+  word_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = 'center', message=FALSE, warning=FALSE)
+```
+**Problem Statement**  
+
+Churn is an issue for telecom companies since it is expensive to obtain new customer than to prevent existing current customer from leaving.
+
+
+Customer Churn Modeling has lot of consideration of late, as there are signs that a huge portion of corporate benefit originates from the current customers.
+
+
+Organizations are exceptionally keen on recognizing customers who are probably going to
+churn and regularly embrace Data Mining techniques to assist them.
+In this project, we have identified the customers who are likely to churn and give an
+appropriate intercession to motivate them to stay based on available information.
+
+
+
+```{r, warning=FALSE, message=FALSE, include=FALSE}
+library(readr)
+library(tidyverse)
+library(caret)
+library(pROC)
+library(ggcorrplot)
+library(gmodels)
+library(rpart)
+library(RANN)
+library(rpart.plot)
+```
+
+
+#### Importing the Churn dataset
+```{r,message=FALSE}
+Churn_Data <- read_csv("Churn_Train.csv")
+
+# Inspecting data
+head(Churn_Data)
+```
+
+
+Examining the dataset
+```{r}
+glimpse(Churn_Data)
+```
+
+
+Summary statistics of dataset
+```{r}
+summary(Churn_Data)
+```
+
+
+#### Data cleaning and Exploratory Data Analysis
+From glimpse we can see that, Some of the character variables can be converted into factors, So Converting character variables to factors.
+```{r}
+Churn_Data <- Churn_Data %>% mutate_if(is.character, as.factor)
+```
+
+
+and From summary we can see that, Churn_Data dataset has both NA and negative values, So investigating and handling further.
+```{r}
+# Checking NULL values in the dataset at column level.
+colSums(is.na(Churn_Data))
+
+# Checking Negative values in the dataset at column level.
+sapply(Churn_Data %>% select_if(is.numeric), function(x) {
+  sum(x < 0, na.rm = TRUE)
+})
+```
+
+
+Since account length, and other numeric variables has few negative values, assuming them as erroneous values, we cannot void them because their corresponding churn value is "no" which means they are still associated with the provider.
+```{r}
+Churn_Data <-
+  Churn_Data %>% mutate_if(is.numeric, function(x) {
+    ifelse(x < 0, abs(x), x)
+  })
+```
+
+
+From the above plot, we see there are outliers in the data, in order to impute NA values, we have several techniques such as mean, median, KNN imputation and linear regression. Since there are many outliers in the data, its not feasible to do mean imputation. Hence using median imputation technique.
+```{r}
+imputation_model <- preProcess(Churn_Data %>% select_if(is.numeric),method = "medianImpute")
+data <- predict(imputation_model, Churn_Data %>% select_if(is.numeric))
+
+Churn_Data <- Churn_Data %>% select(setdiff(names(Churn_Data), names(data))) %>% cbind(data)
+```
+
+**Visualization** 
+```{r}
+Churn_Data %>% select_if(is.numeric) %>% mutate_all(scale) %>% gather("features","values") %>% na.omit() %>% 
+  ggplot(aes(x = features, y = values)) +
+  geom_boxplot(show.legend = FALSE) +
+  stat_summary(fun = mean, geom = "point", pch = 1) + # Add average to the boxplot
+  scale_y_continuous(name = "Variable values", minor_breaks = NULL) +
+  scale_fill_brewer(palette = "Set1") +
+  coord_flip() + 
+  theme_minimal() +
+  labs(x = "Variable names") +
+  ggtitle(label = "Distribution of numeric variables in Churn dataset")
+```
+
+
+
+Visualizing distribution of Churn categorical variable.
+```{r}
+ggplot(Churn_Data, aes(x=churn, y=..prop..,group = 1)) + 
+  geom_bar(fill="light blue") +
+  theme_classic() + 
+  geom_text(aes(label=round(..prop..,2)),stat = "count",
+            position = position_stack(vjust=0.5)) + 
+  labs(y = 'Proportion', title = "Proportion of churn") +
+  scale_x_discrete(labels = c("No","Yes"))
+```
+
+From the above graph we can see that only around 14% of population are Churned and rest 86% are retained in the telecom network.
+
+
+Proportion of area_code
+```{r}
+as.data.frame(prop.table(table(Churn_Data[c("area_code","churn")]))) %>% 
+  ggplot(aes(x=area_code,y=Freq,fill=churn)) + geom_col() + 
+  geom_text(aes(label=round(Freq,2)),position = position_stack(vjust = 0.5),size=2.8) + 
+  theme_classic() + labs( y = 'Proportion', title = "Proportion of area_code") + 
+  theme(legend.title = element_blank()) + 
+  scale_fill_manual(labels = c("Churn: No","Churn: Yes"), 
+                    values = c("azure2","light blue"))
+```
+
+
+Proportion of international_plan
+```{r}
+as.data.frame(prop.table(table(Churn_Data[c("international_plan","churn")]))) %>% 
+  ggplot(aes(x=international_plan,y=Freq,fill=churn)) + geom_col() + 
+  geom_text(aes(label=round(Freq,2)),position = position_stack(vjust = 0.5),size=2.8) + 
+  theme_classic() + labs( y = 'Proportion', title = "Proportion of international_plan") + 
+  theme(legend.title = element_blank()) + 
+  scale_fill_manual(labels = c("Churn: No","Churn: Yes"), 
+                    values = c("azure2","light blue"))
+```
+
+
+Proportion of voice_mail_plan
+```{r}
+as.data.frame(prop.table(table(Churn_Data[c("voice_mail_plan","churn")]))) %>% 
+  ggplot(aes(x=voice_mail_plan,y=Freq,fill=churn)) + geom_col() + 
+  geom_text(aes(label=round(Freq,2)),position = position_stack(vjust = 0.5),size=2.8) + 
+  theme_classic() + labs( y = 'Proportion', title = "Proportion of international_plan") + 
+  theme(legend.title = element_blank()) + 
+  scale_fill_manual(labels = c("No","Yes"), 
+                    values = c("azure2","light blue"))
+```
+**Correlation**
+
+The image below will assist us in determining the variables' correlation.
+
+
+```{r,  fig.height = 8}
+Churn_Data_cor <- round(cor(Churn_Data %>% select_if(is.numeric)), 1)
+
+ggcorrplot(Churn_Data_cor,  title = "Correlation", type = "lower") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 90))
+
+
+
+Churn_Data <- Churn_Data %>% select(-state, -churn) %>% 
+  fastDummies::dummy_cols(., remove_selected_columns = TRUE) %>% mutate(state = Churn_Data$state, churn = Churn_Data$churn)
+```
+
+Total minutes and total charge for the day, evening, night, and international are strongly linked, we can deduce.
+
+
+# Model Strategy:
+
+
+The influence of various variables and their importance in predicting the outcome of the target variable has been demonstrated using a predictive model based on regression. Regression can be done in two ways: linear or logistic.
+Since the target variable in this data is categorical, a logistic regression model is an appropriate choice. It's tempting to use linear regression as a model, but the performance likelihood may be negative or greater than 1, which is useless when predicting a binomial attribute. The ideal outcome for this model is a likelihood or probability of odds between 0 and 1, which is given by logistic regression.
+
+
+##Logistic Regression
+
+
+#### Pre-Processing of data
+
+
+**Splitting dataset into training (80%) and validation (20%) sets**
+The training set will be used to fit our model which we will be testing over the testing set.
+```{r}
+set.seed(12)
+index <- createDataPartition(Churn_Data$churn, p=0.8, list=FALSE)
+Churn_Data_train_df <- Churn_Data[index,]
+Churn_Data_test_df <- Churn_Data[-index,]
+```
+
+
+as
+```{r}
+scaling <- preProcess(Churn_Data_train_df %>% select_if(is.numeric), method = c("center", "scale"))
+Churn_Data_train_norm <- predict(scaling, Churn_Data_train_df %>% select_if(is.numeric))
+Churn_Data_test_norm <- predict(scaling, Churn_Data_test_df %>% select_if(is.numeric))
+
+Churn_Data_train_norm$churn <- Churn_Data_train_df$churn
+Churn_Data_test_norm$churn <- Churn_Data_test_df$churn
+```
+
+
+
+#### Model Construction
+```{r}
+Model_1 <- glm(churn ~ ., data = Churn_Data_train_norm , family= "binomial")
+
+summary(Model_1)
+```
+
+Now we can analyze the fitting and interpret what the model is telling us.
+
+
+Predict values using based on Model_1.
+```{r}
+pred_probs <- predict(object = Model_1,Churn_Data_test_norm, type = "response")
+
+# Finding accuracy for the model
+# Function to find the accuracy, based on probability(0.5 - 0.9) 
+sequence1 <- data.frame(pred_cutoff = seq(0.5,0.9,0.1), pred_accuracy = rep(0,5))
+
+for (i in 1:5){
+  Model_11 <- as.factor(ifelse(pred_probs > sequence1$pred_cutoff[i], "yes", "no"))
+  sequence1[i,2] <- confusionMatrix(Model_11,Churn_Data_test_df$churn )$overall[1]
+}
+
+# Shows the probability with its accuracy
+sequence1
+```
+
+# Assigning labels based on maximum probability prediction
+```{r}
+Model_Pre_lables <- as.factor(ifelse(pred_probs>sequence1$pred_cutoff[which.max(sequence1$pred_accuracy)] ,"yes","no")) 
+```
+
+#### Performance Metrics
+Confusion matrix for significant variable model.
+```{r}
+CrossTable(x=Churn_Data_test_norm$churn, y = Model_Pre_lables, prop.chisq = FALSE)
+
+confusionMatrix(Model_Pre_lables,Churn_Data_test_norm$churn)
+```
+
+
+**Accuracy** -> ```r round(confusionMatrix(Churn_Data_test_norm$churn, Model_Pre_lables)$overall[1], 3)```
+**Sensitivity** -> ```r round(confusionMatrix(Churn_Data_test_norm$churn, Model_Pre_lables)$byClass[1], 3)```
+**Specificity** -> ```r round(confusionMatrix(Churn_Data_test_norm$churn, Model_Pre_lables)$byClass[2], 3)```
+**Precision** -> ```r round(confusionMatrix(Churn_Data_test_norm$churn, Model_Pre_lables)$byClass[5], 3)```
+**Recall** -> ```r round(confusionMatrix(Churn_Data_test_norm$churn, Model_Pre_lables)$byClass[6], 3)```
+
+
+
+#### AUC of the model 1
+```{r}
+
+roc(Churn_Data_test_df$churn, pred_probs)
+plot.roc(roc(Churn_Data_test_df$churn, pred_probs))
+
+```
+
+#### Constructing decision tree model on above partitioned data
+#### Model Construction
+```{r}
+Model_2 <- rpart(churn ~ ., data = Churn_Data_train_norm, method = "class")
+
+rpart.plot(Model_2, type = 3, box.palette = c("red", "green"), fallen.leaves = TRUE)
+```
+
+Now we can analyze the fitting and interpret what the model is telling us.
+
+
+Predict values using based on Model_2.
+```{r}
+pred_labels <- predict(object = Model_2,Churn_Data_test_norm, type = "class")
+pred_probs <- predict(object = Model_2,Churn_Data_test_norm)
+```
+
+
+#### Performance Metrics
+Confusion matrix for significant variable model.
+```{r}
+CrossTable(x=Churn_Data_test_norm$churn, y = pred_labels, prop.chisq = FALSE)
+
+confusionMatrix(pred_labels,Churn_Data_test_norm$churn)
+```
+
+
+**Accuracy** -> ```r round(confusionMatrix(Churn_Data_test_norm$churn, Model_Pre_lables)$overall[1], 3)```
+**Sensitivity** -> ```r round(confusionMatrix(Churn_Data_test_norm$churn, Model_Pre_lables)$byClass[1], 3)```
+**Specificity** -> ```r round(confusionMatrix(Churn_Data_test_norm$churn, Model_Pre_lables)$byClass[2], 3)```
+**Precision** -> ```r round(confusionMatrix(Churn_Data_test_norm$churn, Model_Pre_lables)$byClass[5], 3)```
+**Recall** -> ```r round(confusionMatrix(Churn_Data_test_norm$churn, Model_Pre_lables)$byClass[6], 3)```
+
+
+
+#### AUC of the model 1
+```{r}
+
+roc(Churn_Data_test_df$churn, pred_probs[,2])
+plot.roc(roc(Churn_Data_test_df$churn, pred_probs[,2]))
+
+```
+
+
+#### Predicting for Customers_To_Predict
+```{r}
+load("C:/Users/prajw/Downloads/Customers_To_Predict.RData")
+Customers_To_Predict_data  <- Customers_To_Predict
+Customers_To_Predict <- Customers_To_Predict %>% select(-state) %>% fastDummies::dummy_cols(., remove_selected_columns = TRUE)
+Customers_To_Predict <- as.data.frame(scale(Customers_To_Predict))
+predict_labels <- predict(object = Model_2, Customers_To_Predict, type = "class")
+
+
+Customers_To_Predict <- Customers_To_Predict_data %>% mutate(Churn_Prob = predict_labels)
+
+table(Customers_To_Predict$Churn_Prob)
+```
